@@ -27,25 +27,24 @@ HOST                                    CLIENT
 
 ## Installation
 
-**1. Install uv** (if you don't have it):
-
-```bash
-# Windows (PowerShell)
-powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
-
-# macOS / Linux
-curl -LsSf https://astral.sh/uv/install.sh | sh
-```
-
-**2. Clone and install dependencies:**
+**1. Clone the repository:**
 
 ```bash
 git clone <repo-url>
 cd Piorsec
-uv sync
 ```
 
-> `uv sync` reads `uv.lock` and installs the exact same versions used in development — no manual pip installs needed.
+**2. Run the setup script for your platform:**
+
+```bash
+# Linux / macOS
+bash setup.sh
+
+# Windows (PowerShell)
+.\setup.ps1
+```
+
+The script installs system dependencies (e.g. PortAudio for PyAudio), uv, and all Python packages via `uv sync` — one command and you're done.
 
 ## Usage
 
