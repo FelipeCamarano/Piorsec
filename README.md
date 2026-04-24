@@ -27,11 +27,25 @@ HOST                                    CLIENT
 
 ## Installation
 
+**1. Install uv** (if you don't have it):
+
+```bash
+# Windows (PowerShell)
+powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
+
+# macOS / Linux
+curl -LsSf https://astral.sh/uv/install.sh | sh
+```
+
+**2. Clone and install dependencies:**
+
 ```bash
 git clone <repo-url>
 cd Piorsec
 uv sync
 ```
+
+> `uv sync` reads `uv.lock` and installs the exact same versions used in development — no manual pip installs needed.
 
 ## Usage
 
