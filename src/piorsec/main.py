@@ -1,30 +1,39 @@
 """
-Piorsec — CLI entry point.
+Piorsec — CLI/GUI entry point.
 
 Usage:
-  piorsec host   --client-ip <CLIENT_IP>   # run as host
-  piorsec client --ip        <HOST_IP>     # run as client
+  piorsec                          # launch GUI
+  piorsec host   --client-ip <IP>  # run as host (CLI)
+  piorsec client --ip        <IP>  # run as client (CLI)
 """
 
 import argparse
 import multiprocessing as mp
+import sys
 
 
-# ---------------------------------------------------------------------------
-# Host mode
-# ---------------------------------------------------------------------------
-def run_host(client_ip: str) -> None:
+def _run_host_cli(client_ip: str) -> None:
     """Spawn all host processes and wait until Ctrl+C."""
+    from piorsec.host.audio import audio_capture
+    from piorsec.host.capture import screen_capture
+    from piorsec.host.encoder import video_encoder
     from piorsec.host.input_receiver import input_receiver
     from piorsec.host.sender import audio_sender, video_sender
     from piorsec.shared.stats import stats_display
 
-    q = mp.Queue()
+    raw_frame_queue = mp.Queue(maxsize=2)
+    encoded_queue = mp.Queue(maxsize=64)
+    audio_queue = mp.Queue(maxsize=64)
+    stats_q = mp.Queue()
+
     procs = [
-        mp.Process(target=video_sender,   args=(client_ip, q), name="video_sender",   daemon=True),
-        mp.Process(target=audio_sender,   args=(client_ip, q), name="audio_sender",   daemon=True),
-        mp.Process(target=input_receiver, args=(q,),           name="input_receiver", daemon=True),
-        mp.Process(target=stats_display,  args=(q, "host"),    name="stats_display",  daemon=True),
+        mp.Process(target=screen_capture,  args=(raw_frame_queue,),               name="capture",        daemon=True),
+        mp.Process(target=video_encoder,   args=(raw_frame_queue, encoded_queue, stats_q), name="encoder", daemon=True),
+        mp.Process(target=video_sender,    args=(client_ip, encoded_queue, stats_q), name="video_sender", daemon=True),
+        mp.Process(target=audio_capture,   args=(audio_queue, stats_q),            name="audio_capture", daemon=True),
+        mp.Process(target=audio_sender,    args=(client_ip, audio_queue, stats_q),  name="audio_sender",  daemon=True),
+        mp.Process(target=input_receiver,  args=(stats_q,),                        name="input_receiver", daemon=True),
+        mp.Process(target=stats_display,   args=(stats_q, "host"),                  name="stats_display",  daemon=True),
     ]
     for p in procs:
         p.start()
@@ -41,30 +50,42 @@ def run_host(client_ip: str) -> None:
         print("\n[piorsec] Host stopped.")
 
 
-# ---------------------------------------------------------------------------
-# Client mode
-# ---------------------------------------------------------------------------
-def run_client(host_ip: str) -> None:
-    """Spawn all client processes and wait until Ctrl+C."""
+def _run_client_cli(host_ip: str) -> None:
+    """Spawn all client processes and run the Qt GUI in the main thread."""
+    from PySide6.QtWidgets import QApplication
+
+    from piorsec.client.audio_output import audio_output
+    from piorsec.client.decoder import video_decoder
+    from piorsec.client.gui import MainWindow
     from piorsec.client.input_sender import input_sender
     from piorsec.client.receiver import audio_receiver, video_receiver
-    from piorsec.shared.stats import stats_display
 
-    q = mp.Queue()
+    app = QApplication(sys.argv)
+
+    packet_queue = mp.Queue(maxsize=256)
+    frame_queue = mp.Queue(maxsize=2)
+    audio_queue = mp.Queue(maxsize=64)
+    stats_queue = mp.Queue(maxsize=64)
+
     procs = [
-        mp.Process(target=video_receiver, args=(q,),          name="video_receiver", daemon=True),
-        mp.Process(target=audio_receiver, args=(q,),          name="audio_receiver", daemon=True),
-        mp.Process(target=input_sender,   args=(host_ip, q),  name="input_sender",   daemon=True),
-        mp.Process(target=stats_display,  args=(q, "client"), name="stats_display",  daemon=True),
+        mp.Process(target=video_receiver, args=(packet_queue, stats_queue), name="video_receiver", daemon=True),
+        mp.Process(target=video_decoder,  args=(packet_queue, frame_queue, stats_queue), name="video_decoder", daemon=True),
+        mp.Process(target=audio_receiver, args=(audio_queue, stats_queue),  name="audio_receiver", daemon=True),
+        mp.Process(target=audio_output,   args=(audio_queue, stats_queue),  name="audio_output",   daemon=True),
+        mp.Process(target=input_sender,   args=(host_ip, stats_queue),      name="input_sender",   daemon=True),
     ]
     for p in procs:
         p.start()
 
-    print(f"[piorsec] CLIENT started — connected to {host_ip}. Press Ctrl+C to stop.")
+    window = MainWindow(frame_queue, stats_queue)
+    window.setWindowTitle(f"Piorsec — Client ({host_ip})")
+    window.show()
+
+    print(f"[piorsec] CLIENT started — connected to {host_ip}. Close window to stop.")
+
     try:
-        for p in procs:
-            p.join()
-    except KeyboardInterrupt:
+        app.exec()
+    finally:
         for p in procs:
             p.terminate()
         for p in procs:
@@ -72,15 +93,12 @@ def run_client(host_ip: str) -> None:
         print("\n[piorsec] Client stopped.")
 
 
-# ---------------------------------------------------------------------------
-# CLI
-# ---------------------------------------------------------------------------
 def main() -> None:
     parser = argparse.ArgumentParser(
         prog="piorsec",
         description="P2P game streaming — play local multiplayer games online.",
     )
-    mode = parser.add_subparsers(dest="mode", required=True)
+    mode = parser.add_subparsers(dest="mode")
 
     host_cmd = mode.add_parser("host", help="Host a game session (streams to a client).")
     host_cmd.add_argument(
@@ -101,9 +119,13 @@ def main() -> None:
     args = parser.parse_args()
 
     if args.mode == "host":
-        run_host(args.client_ip)
+        _run_host_cli(args.client_ip)
     elif args.mode == "client":
-        run_client(args.ip)
+        _run_client_cli(args.ip)
+    else:
+        # No subcommand — launch GUI
+        from piorsec.gui.launcher import run_launcher
+        run_launcher()
 
 
 if __name__ == "__main__":
